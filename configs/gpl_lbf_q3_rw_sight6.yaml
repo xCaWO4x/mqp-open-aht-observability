@@ -1,0 +1,100 @@
+# Q3_rw SIGHT SWEEP — sight = 6
+#
+# Identical to configs/gpl_lbf_q3_rw.yaml except:
+#   - env.sight: 3 -> 6
+#   - logging dirs / wandb group changed to avoid collisions
+#
+# Purpose: companion to the Q3-inf-aux sight sweep. Strips the aux head
+# so the only variable is observability. Two-curve overlay with
+# Q3-inf-aux isolates whether flatness in the inference-head sweep is
+# driven by observability saturation (both curves flat) or by the aux
+# head itself eating performance (Q3_rw rises, Q3-inf-aux doesn't).
+
+# --- Environment ---
+env:
+  id: "Foraging-8x8-3p-3f-v3"
+  backend: "gymnasium"
+  grid_size: 8
+  n_agents: 3
+  n_food: 3
+  max_steps: 50
+  force_coop: false
+  sight: 6
+  observe_agent_levels: false
+
+# --- Agent types ---
+types:
+  K: 3
+  levels: [1, 2, 3]
+  level_offset: 1
+
+
+# --- Food configuration ---
+food:
+  mode: "fixed"
+  n_food: 3
+  fixed_level_probs:
+    2: 0.6
+    3: 0.4
+  coupled_concentration: 0.7
+
+# --- PREPROCESS dimensions ---
+preprocess:
+  agent_feat_dim: 2
+  food_feat_dim: 3
+  obs_dim: 11
+
+# --- GPL architecture ---
+model:
+  action_dim: 6
+  hidden_dim: 100
+  type_dim: 100
+  n_gnn_layers: 2
+  pairwise_rank: 5
+
+# --- Training ---
+training:
+  mode: "online"
+  n_episodes: 128000
+  n_envs: 16
+  lr: 2.5e-4
+  gamma: 0.99
+  t_update: 4
+  t_targ_update: 1
+  polyak_tau: 1.0e-3
+  grad_clip: 10.0
+
+# --- Epsilon schedule ---
+epsilon:
+  init: 1.0
+  final: 0.05
+  decay_steps: 4800000
+  decay_episodes: 1500
+
+# --- GPL variant ---
+variant: "GPL-Q"
+tau: null
+
+spi:
+  init_temp: 1.0
+  final_temp: 0.01
+  anneal_method: "linear"
+  anneal_episodes: 1500
+
+# --- Evaluation ---
+eval:
+  eval_every: 50
+  eval_episodes: 5
+  save_every: 50
+
+
+# --- Logging ---
+logging:
+  wandb_project: "open-aht-observability"
+  wandb_group: "q3-rw-sight6"
+  tensorboard: true
+  log_dir: "runs/q3_rw_sight6_stationary"
+  results_dir: "results/q3_rw_sight6_stationary"
+
+# --- Reproducibility ---
+seed: 42

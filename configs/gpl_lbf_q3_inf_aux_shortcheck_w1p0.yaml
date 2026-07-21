@@ -1,0 +1,93 @@
+# Q3-inf-aux SHORT CHECK — validates that the aux head actually learns after
+# the fix in gpl_agent_inf.py (use carried LSTM hidden for the aux forward
+# instead of None). Short run; do NOT use for final experiments.
+#
+# Success criterion: training log's `aux=` (which is aux_weight * CE) should
+# drop well below aux_weight * ln(3) ≈ 0.110 within a few thousand episodes.
+#
+# Compare: the previous (buggy) full run stayed at ~0.107 across all 128k eps.
+
+env:
+  id: "Foraging-8x8-3p-3f-v3"
+  backend: "gymnasium"
+  grid_size: 8
+  n_agents: 3
+  n_food: 3
+  max_steps: 50
+  force_coop: false
+  sight: 3
+  observe_agent_levels: false
+
+types:
+  K: 3
+  levels: [1, 2, 3]
+  level_offset: 1
+
+ou:
+  K: 3
+  dt: 0.01
+  mu: null
+
+food:
+  mode: "fixed"
+  n_food: 3
+  fixed_level_probs:
+    2: 0.6
+    3: 0.4
+  coupled_concentration: 0.7
+
+preprocess:
+  agent_feat_dim: 2
+  food_feat_dim: 3
+  obs_dim: 11
+
+model:
+  action_dim: 6
+  hidden_dim: 100
+  type_dim: 100
+  n_gnn_layers: 2
+  pairwise_rank: 5
+
+inference:
+  aux_weight: 1.0
+  aux_n_classes: 3
+
+training:
+  mode: "online"
+  n_episodes: 12000
+  n_envs: 16
+  lr: 2.5e-4
+  gamma: 0.99
+  t_update: 4
+  t_targ_update: 1
+  polyak_tau: 1.0e-3
+  grad_clip: 10.0
+
+epsilon:
+  init: 1.0
+  final: 0.05
+  decay_steps: 4800000
+  decay_episodes: 1500
+
+variant: "GPL-Q"
+tau: null
+
+spi:
+  init_temp: 1.0
+  final_temp: 0.01
+  anneal_method: "linear"
+  anneal_episodes: 1500
+
+eval:
+  eval_every: 50
+  eval_episodes: 5
+  save_every: 200
+
+logging:
+  wandb_project: "open-aht-observability"
+  wandb_group: "q3-inf-aux-shortcheck-w1p0"
+  tensorboard: false
+  log_dir: "runs/q3_inf_aux_shortcheck_w1p0"
+  results_dir: "results/q3_inf_aux_shortcheck_w1p0"
+
+seed: 45

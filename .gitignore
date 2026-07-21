@@ -1,0 +1,24 @@
+# Local dev notes
+CHANGELOG.md
+TODO.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Large artifacts (never commit; keep on cluster/disk for training and sweeps)
+# copy elsewhere: rsync -a results/ logs/ <dest>/
+results/
+runs/
+wandb/
+logs/
+
+# Environment
+.env
+*.egg
+
+# OS
+.DS_Store

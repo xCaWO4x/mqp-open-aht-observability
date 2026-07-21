@@ -1,0 +1,104 @@
+# Q3-inf-aux — Info-nerf-only GPL with auxiliary inference head
+#
+# Ablation: tests whether forcing type embeddings to encode level structure
+# (via CTDE auxiliary loss) improves performance, WITHOUT any cross-episode
+# population context. Isolates the contribution of the auxiliary head.
+#
+# Compare:
+#   Q3-inf-aux vs Q3_rw   → does aux head alone help?
+
+# --- Environment (same as Q3_rw / Q1 structure + info nerfs) ---
+env:
+  id: "Foraging-8x8-3p-3f-v3"
+  backend: "gymnasium"
+  grid_size: 8
+  n_agents: 3
+  n_food: 3
+  max_steps: 50
+  force_coop: false
+  sight: 3
+  observe_agent_levels: false
+
+# --- Agent types ---
+types:
+  K: 3
+  levels: [1, 2, 3]
+  level_offset: 1
+
+
+# --- Food configuration ---
+food:
+  mode: "fixed"
+  n_food: 3
+  fixed_level_probs:
+    2: 0.6
+    3: 0.4
+  coupled_concentration: 0.7
+
+# --- PREPROCESS dimensions ---
+# observe_agent_levels=false → agent features (y, x) = 2
+# B_j = [x_j; u] = 2 + 3*3 = 11
+preprocess:
+  agent_feat_dim: 2
+  food_feat_dim: 3
+  obs_dim: 11
+
+# --- GPL architecture ---
+model:
+  action_dim: 6
+  hidden_dim: 100
+  type_dim: 100
+  n_gnn_layers: 2
+  pairwise_rank: 5
+
+# --- Auxiliary inference config ---
+inference:
+  aux_weight: 0.1                       # auxiliary level prediction head ON
+  aux_n_classes: 3
+
+# --- Training ---
+training:
+  mode: "online"
+  n_episodes: 128000
+  n_envs: 16
+  lr: 2.5e-4
+  gamma: 0.99
+  t_update: 4
+  t_targ_update: 1
+  polyak_tau: 1.0e-3
+  grad_clip: 10.0
+
+# --- Epsilon schedule ---
+epsilon:
+  init: 1.0
+  final: 0.05
+  decay_steps: 4800000
+  decay_episodes: 1500
+
+# --- GPL variant ---
+variant: "GPL-Q"
+tau: null
+
+spi:
+  init_temp: 1.0
+  final_temp: 0.01
+  anneal_method: "linear"
+  anneal_episodes: 1500
+
+# --- Evaluation ---
+eval:
+  eval_every: 50
+  eval_episodes: 5
+  save_every: 50
+
+
+# --- Logging ---
+logging:
+  wandb_project: "open-aht-observability"
+  wandb_group: "q3-inf-aux-rw"
+  tensorboard: true
+  log_dir: "runs/q3_inf_aux_rw_stationary"
+  results_dir: "results/q3_inf_aux_rw_stationary"
+
+# --- Reproducibility ---
+seed: 42

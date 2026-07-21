@@ -1,0 +1,111 @@
+# Q1 — Baseline GPL training for Level-Based Foraging
+# Hyperparameters aligned with Rahman et al. 2023 GPL source code
+# (Open_Experiments/LBF/GPL-Q/)
+#
+# Paper-length GPL training on LBF (128k ep, 16 envs, paper ε decay).
+# Full observability, 3 agents, no forced coop.
+#
+# Observability layout:
+#   Q1: full-observation baseline  -> results/q1_baseline_stationary/
+#   Q3_rw: hidden-level baseline   -> results/q3_rw_stationary/
+
+# --- Environment ---
+env:
+  id: "Foraging-8x8-3p-3f-v3"  # registered name (not used directly; we create ForagingEnv)
+  backend: "gymnasium"
+  grid_size: 8
+  n_agents: 3
+  n_food: 3
+  max_steps: 50                    # paper: 50 (NOT 200)
+  force_coop: false                 # paper: no forced coop — high-level agent can solo-collect low food
+  sight: 8                      # full observability
+
+# --- Agent types (= LBF levels) ---
+# K=3 types mapping to LBF levels 1, 2, 3
+types:
+  K: 3                          # number of discrete types
+  levels: [1, 2, 3]             # LBF level for each type index
+  level_offset: 1               # type_index + offset = LBF level
+
+
+# --- Food configuration ---
+# Primary: fixed distribution over {2, 3}, independent of agent population
+food:
+  mode: "fixed"                 # "fixed" (primary) or "coupled" (ablation)
+  n_food: 3
+  fixed_level_probs:            # food level distribution for mode="fixed"
+    2: 0.6
+    3: 0.4
+  # Ablation settings (mode="coupled"):
+  coupled_concentration: 0.7    # probability mass on center level
+
+# --- PREPROCESS dimensions (derived from env) ---
+# x_j = (y, x, level) = 3 features per agent
+# u   = (y, x, level) x n_food = 9 features
+# B_j = [x_j; u] -> obs_dim = 3 + 3*n_food = 12
+preprocess:
+  agent_feat_dim: 3
+  food_feat_dim: 3
+  obs_dim: 12                   # 3 + 3*3
+
+# --- GPL architecture ---
+# Matches GPL source: LSTMMRF(3, 9, 100, 100, 100, 70, 6, 70, 30, 20)
+model:
+  action_dim: 6                 # LBF: 6 discrete actions (noop, up, down, left, right, load)
+  hidden_dim: 100               # LSTM hidden/cell state size
+  type_dim: 100                 # type embedding dim (= hidden_dim, no projection)
+  n_gnn_layers: 2               # GNN message-passing rounds in agent model
+  pairwise_rank: 5              # paper: K=5 for low-rank pairwise Q
+
+# --- Training ---
+training:
+  mode: "online"                # "online" (Alg. 5) or "replay" (buffer variant)
+  n_episodes: 128000            # paper: ~128K episodes (6.4M steps / 50 steps)
+  n_envs: 16                    # paper: 16 parallel environments
+  lr: 2.5e-4                    # paper: 2.5e-4 (Adam)
+  gamma: 0.99                   # discount factor
+  t_update: 4                   # gradient accumulation over 4 parallel steps
+  t_targ_update: 1              # soft update every step (Polyak averaging)
+  polyak_tau: 1.0e-3            # paper: alpha=1e-3 soft update
+  grad_clip: 10.0               # max gradient norm
+
+# --- Epsilon schedule ---
+# Paper: decays from 1.0 -> 0.05 over 4.8M env steps
+epsilon:
+  init: 1.0
+  final: 0.05
+  decay_steps: 4800000          # step-based decay (paper)
+  decay_episodes: 1500          # fallback if decay_steps not set
+
+# --- GPL variant ---
+# GPL-Q: tau = null (Q-learning, Eq. 17)
+# GPL-SPI: tau = float (soft policy iteration, Eqs. 18-19)
+variant: "GPL-Q"
+tau: null
+
+# GPL-SPI temperature annealing (only used if variant == "GPL-SPI")
+spi:
+  init_temp: 1.0
+  final_temp: 0.01
+  anneal_method: "linear"
+  anneal_episodes: 1500
+
+# --- Evaluation ---
+eval:
+  eval_every: 50                # evaluate every N episodes
+  eval_episodes: 5              # episodes per evaluation
+  save_every: 50                # checkpoint every N episodes
+
+
+# --- Logging ---
+logging:
+  wandb_project: "open-aht-observability"
+  wandb_group: "q1-baseline"
+  tensorboard: true
+  log_dir: "runs/q1_baseline_stationary"
+  results_dir: "results/q1_baseline_stationary"
+  # Per-episode: target_distribution, realized_composition, agent_levels,
+  # food_levels, mean_agent_level, total_team_capability, mean_food_level
+
+# --- Reproducibility ---
+seed: 42
