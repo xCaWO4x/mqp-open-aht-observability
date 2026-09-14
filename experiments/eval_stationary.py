@@ -127,8 +127,7 @@ def evaluate(agent, cfg: dict, n_episodes: int, seed: int):
             obs, reward, done, _ = _unpack_step(env.step(joint_action))
             ep_return += reward
             ep_len += 1
-        if is_inf:
-            rows.append({
+        rows.append({
             "episode": episode,
             "return": ep_return,
             "length": ep_len,

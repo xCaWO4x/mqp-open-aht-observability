@@ -151,6 +151,7 @@ def preprocess_lbf(
     hidden_dim: int = 128,
     device: str = "cpu",
     observe_agent_levels: bool = True,
+    from_ego_perspective: bool = True,
 ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor], List[int]]:
     """PREPROCESS specialised for Level-Based Foraging.
 
@@ -158,35 +159,16 @@ def preprocess_lbf(
     Each agent's obs is: [food(3 each), self(feat_dim), other_agents(feat_dim each)].
     Food features come FIRST, then agent features (self first among agents).
 
-    When observe_agent_levels=True (default):
-        agent features = (y, x, level) → 3 per agent
+    When observe_agent_levels=True:
+        agent features = (y, x, level) -> 3 per agent
     When observe_agent_levels=False:
-        agent features = (y, x) → 2 per agent (level is dropped by LBF)
+        agent features = (y, x) -> 2 per agent
 
-    We reconstruct the global state and produce:
-        x_j = agent j's features (2 or 3 dims)
-        u   = food features = 3 * n_food features
-        B_j = [x_j ; u]    (obs_dim = agent_feat_dim + 3 * n_food)
-
-    Parameters
-    ----------
-    raw_obs : tuple/list of arrays
-        Per-agent observations from LBF.
-        Format: [food_0(3), ..., food_m(3), self(feat), other_0(feat), ...]
-        OR a single flat array (already global state).
-    n_agents : int
-        Number of agents in the environment.
-    n_food : int
-        Number of food items.
-    prev_agent_ids : list of int or None
-        Agent IDs from previous timestep (for hidden state tracking).
-    prev_hidden : tuple of (h, c) or None
-        Previous LSTM hidden states.
-    hidden_dim : int
-    device : str
-    observe_agent_levels : bool
-        Whether LBF was configured with observe_agent_levels=True.
-        Determines per-agent feature dimension (3 vs 2).
+    When from_ego_perspective=True:
+        Teammate features are extracted from agent 0's field of view. Entities outside
+        the spatial sight radius are masked to -1.
+    When from_ego_perspective=False:
+        Each agent's features are extracted from its own ego-perspective (always visible to itself).
 
     Returns
     -------
@@ -195,35 +177,30 @@ def preprocess_lbf(
     agent_ids : list of int
     """
     agent_feat_dim = LBF_AGENT_FEAT_DIM if observe_agent_levels else 2
+    food_end = n_food * LBF_FOOD_FEAT_DIM
+    agent_start = food_end
 
     if isinstance(raw_obs, (list, tuple)):
-        # Multi-agent obs: reconstruct global state from ego-centric views.
-        # LBF obs format: [food(3*n_food), self(agent_feat_dim), others(agent_feat_dim*(n_agents-1))]
-        # Food comes FIRST, then agents (self first among agents).
-        #
-        # Strategy: extract each agent's own features from their ego obs,
-        # and shared food features from any agent's obs.
-
-        food_end = n_food * LBF_FOOD_FEAT_DIM
-        agent_start = food_end  # agents start right after food
-
-        agent_features = []   # list of (y, x[, level]) per agent
-        for i in range(n_agents):
-            obs_i = np.asarray(raw_obs[i], dtype=np.float32)
-            # Self agent features start at food_end (first among agents)
-            agent_features.append(obs_i[agent_start:agent_start + agent_feat_dim])
-
-        # Food features from agent 0 (same positions for all, may differ in order)
         obs_0 = np.asarray(raw_obs[0], dtype=np.float32)
         food_features = obs_0[:food_end]
 
-        # Build a flat global state: [agent_0(feat), agent_1(feat), ..., food(3*n_food)]
+        agent_features = []
+        if from_ego_perspective:
+            # Agent 0 self
+            agent_features.append(obs_0[agent_start:agent_start + agent_feat_dim])
+            # Teammates from agent 0's observation (masked to -1 if outside sight)
+            for j in range(1, n_agents):
+                tm_start = agent_start + j * agent_feat_dim
+                agent_features.append(obs_0[tm_start:tm_start + agent_feat_dim])
+        else:
+            for i in range(n_agents):
+                obs_i = np.asarray(raw_obs[i], dtype=np.float32)
+                agent_features.append(obs_i[agent_start:agent_start + agent_feat_dim])
+
         global_state = np.concatenate(agent_features + [food_features])
     else:
-        # Already a flat global state
         global_state = np.asarray(raw_obs, dtype=np.float32)
 
-    # Build slices for the generic preprocess
     agent_feature_slices = {}
     curr_agent_ids = list(range(n_agents))
     for i in range(n_agents):
@@ -240,11 +217,90 @@ def preprocess_lbf(
 
 
 # ======================================================================
+# Wolfpack PREPROCESS
+# ======================================================================
+
+WOLFPACK_WOLF_FEAT_DIM = 2    # (y, x) per wolf
+WOLFPACK_PREY_FEAT_DIM = 3    # (y, x, active) per prey
+
+
+def preprocess_wolfpack(
+    raw_obs,
+    n_wolves: int = 3,
+    n_prey: int = 2,
+    prev_agent_ids: Optional[List[int]] = None,
+    prev_hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    hidden_dim: int = 128,
+    device: str = "cpu",
+    from_ego_perspective: bool = True,
+) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor], List[int]]:
+    """PREPROCESS specialised for Wolfpack.
+
+    Obs layout per agent i:
+        [prey_0(3), ..., prey_{M-1}(3), self(2), other_1(2), ..., other_{N-1}(2)]
+    Entities out of sight are masked to -1.0.
+
+    Constructs:
+        x_j = wolf j's (y, x) -> 2 features
+        u   = prey features = 3 * n_prey features
+        B_j = [x_j ; u] -> obs_dim = 2 + 3 * n_prey (e.g. 2 + 6 = 8)
+
+    Returns
+    -------
+    B : Tensor, shape (n_wolves, 2 + 3*n_prey)
+    hidden : tuple of (h, c) each shape (n_wolves, hidden_dim)
+    agent_ids : list of int
+    """
+    prey_end = n_prey * WOLFPACK_PREY_FEAT_DIM
+    wolf_start = prey_end
+
+    if isinstance(raw_obs, (list, tuple)):
+        obs_0 = np.asarray(raw_obs[0], dtype=np.float32)
+        prey_features = obs_0[:prey_end]
+
+        wolf_features = []
+        if from_ego_perspective:
+            # Wolf 0 (self)
+            wolf_features.append(obs_0[wolf_start:wolf_start + WOLFPACK_WOLF_FEAT_DIM])
+            # Teammate wolves from wolf 0's observation
+            for j in range(1, n_wolves):
+                w_start = wolf_start + j * WOLFPACK_WOLF_FEAT_DIM
+                wolf_features.append(obs_0[w_start:w_start + WOLFPACK_WOLF_FEAT_DIM])
+        else:
+            for i in range(n_wolves):
+                obs_i = np.asarray(raw_obs[i], dtype=np.float32)
+                wolf_features.append(obs_i[wolf_start:wolf_start + WOLFPACK_WOLF_FEAT_DIM])
+
+        global_state = np.concatenate(wolf_features + [prey_features])
+    else:
+        global_state = np.asarray(raw_obs, dtype=np.float32)
+
+    agent_feature_slices = {}
+    curr_agent_ids = list(range(n_wolves))
+    for i in range(n_wolves):
+        start = i * WOLFPACK_WOLF_FEAT_DIM
+        agent_feature_slices[i] = slice(start, start + WOLFPACK_WOLF_FEAT_DIM)
+
+    shared_feature_slice = slice(n_wolves * WOLFPACK_WOLF_FEAT_DIM, len(global_state))
+
+    return preprocess(
+        global_state, agent_feature_slices, shared_feature_slice,
+        prev_agent_ids, curr_agent_ids, prev_hidden,
+        hidden_dim, device,
+    )
+
+
+# ======================================================================
 # Generic helpers
 # ======================================================================
 
 def make_env(env_id: str, seed: int = 0, **kwargs):
-    """Create and seed a gym environment by id."""
+    """Create and seed an environment by id or type."""
+    if env_id.lower().startswith("wolfpack"):
+        from envs.wolfpack_env import WolfpackEnv
+        env = WolfpackEnv(seed=seed, **kwargs)
+        return env
+
     try:
         import gymnasium as gym
     except ImportError:
