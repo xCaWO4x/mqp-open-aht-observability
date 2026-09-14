@@ -62,7 +62,7 @@ def make_benchmark_env(env_name: str, sight: int, seed: int = 0, **kwargs):
             sight=sight,
             coop_radius=kwargs.get("coop_radius", 1),
             min_coop_wolves=kwargs.get("min_coop_wolves", 2),
-            capture_reward=kwargs.get("capture_reward", 5.0),
+            capture_reward=kwargs.get("capture_reward", 1.0),
             respawn_prey=kwargs.get("respawn_prey", True),
             seed=seed,
         )

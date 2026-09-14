@@ -31,7 +31,7 @@ def run_env_steps(env_name: str, sight: int, teammate_type: str, n_steps: int = 
         env = make_benchmark_env("lbf", sight=sight, seed=seed, grid_size=8, n_agents=n_agents, n_food=3, max_steps=50, K=3, observe_agent_levels=False)
     else:
         n_agents = 3
-        env = make_benchmark_env("wolfpack", sight=sight, seed=seed, grid_size=10, n_wolves=n_agents, n_prey=2, max_steps=50)
+        env = make_benchmark_env("wolfpack", sight=sight, seed=seed, grid_size=10, n_wolves=n_agents, n_prey=2, max_steps=50, capture_reward=1.0)
 
     teammate_policy = get_teammate_policy(env_name, teammate_type, rng=rng)
 
@@ -123,7 +123,7 @@ def test_gpl_training_iteration():
     agent_wp = GPLAgent(obs_dim=8, action_dim=5, type_dim=32, hidden_dim=64, n_gnn_layers=2, pairwise_rank=4, t_update=1, device=device)
     B_t_wp = np.random.randn(3, 8).astype(np.float32)
     actions_wp = np.array([2, 1, 4])
-    reward_wp = 5.0
+    reward_wp = 1.0
     B_next_wp = np.random.randn(3, 8).astype(np.float32)
     done_wp = False
 

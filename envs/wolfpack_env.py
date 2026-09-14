@@ -57,7 +57,7 @@ class WolfpackEnv(gym.Env):
         Radius defining adjacency for capture (<= 1 cell).
     min_coop_wolves : int, default 2
         Minimum adjacent wolves required to capture a prey.
-    capture_reward : float, default 5.0
+    capture_reward : float, default 1.0
         Reward given to the team upon successful capture.
     respawn_prey : bool, default True
         Whether captured prey respawns at a random unoccupied cell.
@@ -76,7 +76,7 @@ class WolfpackEnv(gym.Env):
         sight: int = 10,
         coop_radius: int = 1,
         min_coop_wolves: int = 2,
-        capture_reward: float = 5.0,
+        capture_reward: float = 1.0,
         respawn_prey: bool = True,
         seed: Optional[int] = None,
     ):
