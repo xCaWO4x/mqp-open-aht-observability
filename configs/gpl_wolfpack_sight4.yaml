@@ -1,0 +1,53 @@
+# Wolfpack sight=4 sweep config
+env:
+  id: "wolfpack"
+  grid_size: 10
+  n_wolves: 3
+  n_prey: 2
+  max_steps: 50
+  sight: 4
+  coop_radius: 1
+  min_coop_wolves: 2
+  capture_reward: 5.0
+  respawn_prey: true
+
+preprocess:
+  agent_feat_dim: 2
+  prey_feat_dim: 3
+  obs_dim: 8
+
+model:
+  action_dim: 5
+  hidden_dim: 100
+  type_dim: 100
+  n_gnn_layers: 2
+  pairwise_rank: 5
+
+training:
+  mode: "online"
+  n_episodes: 128000
+  n_envs: 16
+  lr: 2.5e-4
+  gamma: 0.99
+  t_update: 4
+  t_targ_update: 1
+  polyak_tau: 1.0e-3
+  grad_clip: 10.0
+
+epsilon:
+  init: 1.0
+  final: 0.05
+  decay_steps: 4800000
+  decay_episodes: 1500
+
+eval:
+  eval_every: 50
+  eval_episodes: 5
+  save_every: 50
+
+logging:
+  tensorboard: true
+  log_dir: "runs/gpl_wolfpack_sight4"
+  results_dir: "results/gpl_wolfpack_sight4"
+
+seed: 42
