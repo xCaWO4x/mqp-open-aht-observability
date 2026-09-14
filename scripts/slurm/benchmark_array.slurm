@@ -84,12 +84,16 @@ if [ "${SMOKE_TEST}" == "1" ]; then
   EXTRA_ARGS="--smoke-test"
 fi
 
+DEVICE="${BENCHMARK_DEVICE:-cuda}"
+
 python -u experiments/run_benchmark.py \
     --env "${BENCHMARK_ENV}" \
     --sight "${SIGHT}" \
     --teammate_type "${TEAMMATE}" \
     --seed "${SEED}" \
     --output_dir "${OUTPUT_DIR}" \
+    --n-episodes 128000 \
+    --device "${DEVICE}" \
     ${EXTRA_ARGS}
 
 echo "Task ${TASK_ID} completed successfully!"

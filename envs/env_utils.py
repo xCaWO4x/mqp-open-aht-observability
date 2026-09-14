@@ -228,6 +228,8 @@ def preprocess_wolfpack(
     raw_obs,
     n_wolves: int = 3,
     n_prey: int = 2,
+    grid_size: float = 10.0,
+    normalize_coords: bool = True,
     prev_agent_ids: Optional[List[int]] = None,
     prev_hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     hidden_dim: int = 128,
@@ -239,6 +241,10 @@ def preprocess_wolfpack(
     Obs layout per agent i:
         [prey_0(3), ..., prey_{M-1}(3), self(2), other_1(2), ..., other_{N-1}(2)]
     Entities out of sight are masked to -1.0.
+
+    When normalize_coords=True:
+        Valid coordinates [0, grid_size) are divided by grid_size (10.0) into [0, 1].
+        Masked values remain -1.0.
 
     Constructs:
         x_j = wolf j's (y, x) -> 2 features
@@ -254,22 +260,43 @@ def preprocess_wolfpack(
     prey_end = n_prey * WOLFPACK_PREY_FEAT_DIM
     wolf_start = prey_end
 
+    def _norm_coords(arr):
+        if not normalize_coords:
+            return arr
+        res = arr.copy()
+        mask = res >= 0
+        res[mask] = res[mask] / grid_size
+        return res
+
     if isinstance(raw_obs, (list, tuple)):
         obs_0 = np.asarray(raw_obs[0], dtype=np.float32)
-        prey_features = obs_0[:prey_end]
+        raw_prey = obs_0[:prey_end].copy()
+        
+        # Normalize prey coordinates (y, x) while preserving active flag
+        prey_features = raw_prey.copy()
+        if normalize_coords:
+            for p_idx in range(n_prey):
+                base = p_idx * WOLFPACK_PREY_FEAT_DIM
+                if prey_features[base] >= 0:
+                    prey_features[base] /= grid_size
+                if prey_features[base + 1] >= 0:
+                    prey_features[base + 1] /= grid_size
 
         wolf_features = []
         if from_ego_perspective:
             # Wolf 0 (self)
-            wolf_features.append(obs_0[wolf_start:wolf_start + WOLFPACK_WOLF_FEAT_DIM])
+            w0 = _norm_coords(obs_0[wolf_start:wolf_start + WOLFPACK_WOLF_FEAT_DIM])
+            wolf_features.append(w0)
             # Teammate wolves from wolf 0's observation
             for j in range(1, n_wolves):
                 w_start = wolf_start + j * WOLFPACK_WOLF_FEAT_DIM
-                wolf_features.append(obs_0[w_start:w_start + WOLFPACK_WOLF_FEAT_DIM])
+                wj = _norm_coords(obs_0[w_start:w_start + WOLFPACK_WOLF_FEAT_DIM])
+                wolf_features.append(wj)
         else:
             for i in range(n_wolves):
                 obs_i = np.asarray(raw_obs[i], dtype=np.float32)
-                wolf_features.append(obs_i[wolf_start:wolf_start + WOLFPACK_WOLF_FEAT_DIM])
+                wi = _norm_coords(obs_i[wolf_start:wolf_start + WOLFPACK_WOLF_FEAT_DIM])
+                wolf_features.append(wi)
 
         global_state = np.concatenate(wolf_features + [prey_features])
     else:

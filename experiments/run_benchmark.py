@@ -62,7 +62,7 @@ def make_benchmark_env(env_name: str, sight: int, seed: int = 0, **kwargs):
             sight=sight,
             coop_radius=kwargs.get("coop_radius", 1),
             min_coop_wolves=kwargs.get("min_coop_wolves", 2),
-            capture_reward=kwargs.get("capture_reward", 5.0),
+            capture_reward=kwargs.get("capture_reward", 1.0),
             respawn_prey=kwargs.get("respawn_prey", True),
             seed=seed,
         )
@@ -106,6 +106,8 @@ def run_benchmark(
     teammate_type: str = "random",
     seed: int = 42,
     n_episodes: Optional[int] = None,
+    n_envs: int = 16,
+    max_steps_total: Optional[int] = None,
     output_dir: Optional[str] = None,
     smoke_test: bool = False,
     device: Optional[str] = None,
@@ -131,8 +133,29 @@ def run_benchmark(
         action_dim = 6
         hidden_dim = 100
         max_steps = 50
-        env = make_benchmark_env("lbf", sight=sight, seed=seed, grid_size=8, n_agents=n_agents, n_food=n_food, max_steps=max_steps, K=K, observe_agent_levels=False)
-        preprocess_fn = lambda obs, dev: preprocess_lbf(obs, n_agents=n_agents, n_food=n_food, hidden_dim=hidden_dim, device=dev, observe_agent_levels=False, from_ego_perspective=True)[0]
+        envs = [
+            make_benchmark_env(
+                "lbf",
+                sight=sight,
+                seed=seed + i,
+                grid_size=8,
+                n_agents=n_agents,
+                n_food=n_food,
+                max_steps=max_steps,
+                K=K,
+                observe_agent_levels=False,
+            )
+            for i in range(n_envs)
+        ]
+        preprocess_fn = lambda obs, dev: preprocess_lbf(
+            obs,
+            n_agents=n_agents,
+            n_food=n_food,
+            hidden_dim=hidden_dim,
+            device=dev,
+            observe_agent_levels=False,
+            from_ego_perspective=True,
+        )[0]
     else:
         n_agents = 3
         n_prey = 2
@@ -140,8 +163,26 @@ def run_benchmark(
         action_dim = 5
         hidden_dim = 100
         max_steps = 50
-        env = make_benchmark_env("wolfpack", sight=sight, seed=seed, grid_size=10, n_wolves=n_agents, n_prey=n_prey, max_steps=max_steps)
-        preprocess_fn = lambda obs, dev: preprocess_wolfpack(obs, n_wolves=n_agents, n_prey=n_prey, hidden_dim=hidden_dim, device=dev, from_ego_perspective=True)[0]
+        envs = [
+            make_benchmark_env(
+                "wolfpack",
+                sight=sight,
+                seed=seed + i,
+                grid_size=10,
+                n_wolves=n_agents,
+                n_prey=n_prey,
+                max_steps=max_steps,
+            )
+            for i in range(n_envs)
+        ]
+        preprocess_fn = lambda obs, dev: preprocess_wolfpack(
+            obs,
+            n_wolves=n_agents,
+            n_prey=n_prey,
+            hidden_dim=hidden_dim,
+            device=dev,
+            from_ego_perspective=True,
+        )[0]
 
     # Teammate policy
     teammate_policy = get_teammate_policy(env_name, teammate_type, rng=rng)
@@ -171,6 +212,10 @@ def run_benchmark(
     eps_final = 0.05
     decay_steps = 200000
 
+    def get_epsilon_by_step(step: int) -> float:
+        frac = min(step / max(decay_steps, 1), 1.0)
+        return eps_init + (eps_final - eps_init) * frac
+
     metrics_file = os.path.join(output_dir, "metrics.csv")
     csv_writer = None
     csv_f = None
@@ -181,30 +226,53 @@ def run_benchmark(
 
     print(f"=== Starting Benchmark ===")
     print(f"Env: {env_name} | Sight: {sight} | Teammates: {teammate_type} | Seed: {seed}")
-    print(f"Episodes: {target_episodes} | Device: {device} | Output: {output_dir}")
+    print(f"Episodes: {target_episodes} | N_envs: {n_envs} | Device: {device} | Output: {output_dir}")
+
+    # Per-env state caching
+    env_obs = [None] * n_envs
+    env_done = [True] * n_envs
+    env_ep_return = [0.0] * n_envs
+    env_ep_len = [0] * n_envs
+    env_hidden = [(None, None, None)] * n_envs
 
     global_step = 0
+    completed_episodes = 0
     all_returns = []
+    last_metrics = {}
 
     pbar = tqdm(total=target_episodes, desc=f"{env_name}_s{sight}_{teammate_type}")
-    for ep in range(target_episodes):
-        if env_is_lbf:
-            ag_levels, fd_levels = sample_lbf_levels(n_agents, K, n_food, rng)
-            env.min_player_level = np.array(ag_levels)
-            env.max_player_level = np.array(ag_levels)
-            env.min_food_level = np.array(fd_levels)
-            env.max_food_level = np.array(fd_levels)
+    while completed_episodes < target_episodes:
+        if max_steps_total is not None and global_step >= max_steps_total:
+            break
 
-        obs = unpack_reset(env.reset())
-        agent.reset()
-        ep_return = 0.0
-        ep_len = 0
-        done = False
-        last_metrics = {}
+        for env_idx in range(n_envs):
+            if completed_episodes >= target_episodes:
+                break
+            if max_steps_total is not None and global_step >= max_steps_total:
+                break
 
-        while not done:
-            frac = min(global_step / max(decay_steps, 1), 1.0)
-            eps = eps_init + (eps_final - eps_init) * frac
+            # Reset env if done
+            if env_done[env_idx]:
+                if env_is_lbf:
+                    ag_levels, fd_levels = sample_lbf_levels(n_agents, K, n_food, rng)
+                    envs[env_idx].min_player_level = np.array(ag_levels)
+                    envs[env_idx].max_player_level = np.array(ag_levels)
+                    envs[env_idx].min_food_level = np.array(fd_levels)
+                    envs[env_idx].max_food_level = np.array(fd_levels)
+
+                env_obs[env_idx] = unpack_reset(envs[env_idx].reset())
+                env_done[env_idx] = False
+                env_ep_return[env_idx] = 0.0
+                env_ep_len[env_idx] = 0
+                env_hidden[env_idx] = (None, None, None)
+
+            # Load per-env hidden states into agent
+            agent._hidden_q = env_hidden[env_idx][0]
+            agent._hidden_agent = env_hidden[env_idx][1]
+            agent._hidden_q_target = env_hidden[env_idx][2]
+
+            obs = env_obs[env_idx]
+            eps = get_epsilon_by_step(global_step)
 
             B = preprocess_fn(obs, device)
             B_np = B.cpu().numpy()
@@ -214,10 +282,10 @@ def run_benchmark(
             # Joint action
             joint_actions = [ego_action]
             for tm_idx in range(1, n_agents):
-                tm_act = teammate_policy.select_action(tm_idx, env=env, obs=obs)
+                tm_act = teammate_policy.select_action(tm_idx, env=envs[env_idx], obs=obs)
                 joint_actions.append(tm_act)
 
-            next_obs, reward, done, _ = unpack_step(env.step(joint_actions))
+            next_obs, reward, done, _ = unpack_step(envs[env_idx].step(joint_actions))
 
             B_next = preprocess_fn(next_obs, device)
             B_next_np = B_next.cpu().numpy()
@@ -228,28 +296,42 @@ def run_benchmark(
             if step_metrics is not None:
                 last_metrics = step_metrics
 
-            obs = next_obs
-            ep_return += reward
-            ep_len += 1
+            # Save per-env hidden states
+            env_hidden[env_idx] = (
+                agent._hidden_q,
+                agent._hidden_agent,
+                agent._hidden_q_target,
+            )
+
+            env_ep_return[env_idx] += reward
+            env_ep_len[env_idx] += 1
+            env_obs[env_idx] = next_obs
+            env_done[env_idx] = done
             global_step += 1
 
-        all_returns.append(ep_return)
-        pbar.update(1)
-        pbar.set_postfix(ret=f"{ep_return:.2f}", avg=f"{np.mean(all_returns[-50:]):.2f}")
+            if done:
+                completed_episodes += 1
+                ep_return = env_ep_return[env_idx]
+                ep_len = env_ep_len[env_idx]
+                all_returns.append(ep_return)
+                pbar.update(1)
+                pbar.set_postfix(ret=f"{ep_return:.2f}", avg=f"{np.mean(all_returns[-50:]):.2f}")
 
-        if logger is not None:
-            logger.log_episode(ep, ep_return, ep_len, {"epsilon": eps})
-            if last_metrics:
-                logger.log_scalars("train", last_metrics, ep)
+                if logger is not None:
+                    logger.log_episode(completed_episodes, ep_return, ep_len, {"epsilon": eps})
+                    if last_metrics:
+                        logger.log_scalars("train", last_metrics, completed_episodes)
 
-        if csv_writer is not None:
-            q_loss = last_metrics.get("q_loss", float("nan"))
-            ag_loss = last_metrics.get("agent_model_loss", float("nan"))
-            csv_writer.writerow([ep, ep_return, ep_len, eps, q_loss, ag_loss])
-            csv_f.flush()
+                if csv_writer is not None:
+                    q_loss = last_metrics.get("q_loss", float("nan"))
+                    ag_loss = last_metrics.get("agent_model_loss", float("nan"))
+                    csv_writer.writerow([completed_episodes, ep_return, ep_len, eps, q_loss, ag_loss])
+                    csv_f.flush()
 
-        if not smoke_test and (ep + 1) % 50 == 0:
-            agent.save(os.path.join(ckpt_dir, f"gpl_ep{ep + 1}.pt"))
+                if not smoke_test and (completed_episodes % 500 == 0 or completed_episodes == target_episodes):
+                    agent.save(os.path.join(ckpt_dir, f"gpl_ep{completed_episodes}.pt"))
+                if not smoke_test and completed_episodes % 50 == 0:
+                    agent.save(os.path.join(ckpt_dir, "gpl_latest.pt"))
 
     pbar.close()
     if csv_f is not None:
@@ -260,7 +342,8 @@ def run_benchmark(
     if not smoke_test:
         agent.save(os.path.join(ckpt_dir, "gpl_final.pt"))
 
-    print(f"Finished! Mean return: {np.mean(all_returns):.3f}")
+    mean_ret = float(np.mean(all_returns)) if len(all_returns) > 0 else 0.0
+    print(f"Finished! Completed episodes: {completed_episodes}, Total steps: {global_step}, Mean return: {mean_ret:.3f}")
     return all_returns
 
 
@@ -271,6 +354,8 @@ def main():
     parser.add_argument("--teammate_type", type=str, default="random", choices=["random", "greedy"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-episodes", type=int, default=None)
+    parser.add_argument("--n-envs", "--n_envs", dest="n_envs", type=int, default=16)
+    parser.add_argument("--max-steps", "--max_steps", dest="max_steps", type=int, default=None)
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--device", type=str, default=None)
@@ -282,6 +367,8 @@ def main():
         teammate_type=args.teammate_type,
         seed=args.seed,
         n_episodes=args.n_episodes,
+        n_envs=args.n_envs,
+        max_steps_total=args.max_steps,
         output_dir=args.output_dir,
         smoke_test=args.smoke_test,
         device=args.device,

@@ -9,7 +9,7 @@ env:
   sight: 3
   coop_radius: 1
   min_coop_wolves: 2
-  capture_reward: 5.0
+  capture_reward: 1.0
   respawn_prey: true
 
 preprocess:
