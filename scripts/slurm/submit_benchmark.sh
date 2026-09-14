@@ -38,10 +38,10 @@ mkdir -p logs/slurm
 if [ "${DRY_RUN}" -eq 1 ]; then
   echo "=== Running Dry-Run Verification (Smoke Test) ==="
   echo "Testing LBF dry run..."
-  BENCHMARK_ENV="lbf" SMOKE_TEST=1 SLURM_ARRAY_TASK_ID=0 SLURM_SUBMIT_DIR="${ROOT_DIR}" \
+  BENCHMARK_ENV="lbf" BENCHMARK_DEVICE="${BENCHMARK_DEVICE:-cpu}" SMOKE_TEST=1 SLURM_ARRAY_TASK_ID=0 SLURM_SUBMIT_DIR="${ROOT_DIR}" \
     bash scripts/slurm/benchmark_array.slurm
   echo "Testing Wolfpack dry run..."
-  BENCHMARK_ENV="wolfpack" SMOKE_TEST=1 SLURM_ARRAY_TASK_ID=0 SLURM_SUBMIT_DIR="${ROOT_DIR}" \
+  BENCHMARK_ENV="wolfpack" BENCHMARK_DEVICE="${BENCHMARK_DEVICE:-cpu}" SMOKE_TEST=1 SLURM_ARRAY_TASK_ID=0 SLURM_SUBMIT_DIR="${ROOT_DIR}" \
     bash scripts/slurm/benchmark_array.slurm
   echo "Dry run completed successfully! Ready for cluster submission."
   exit 0
