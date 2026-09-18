@@ -13,14 +13,21 @@ from collections import defaultdict
 def parse_dir_name(dirname):
     # Format: {env}_sight{sight}_{teammate}_seed{seed}
     base = os.path.basename(dirname)
+    if base.startswith("diag_") or base.startswith("test_") or base == "plots":
+        return None
     parts = base.split("_")
     if len(parts) < 4:
         return None
     env = parts[0]
-    sight = int(parts[1].replace("sight", ""))
-    teammate = parts[2]
-    seed = int(parts[3].replace("seed", ""))
-    return env, sight, teammate, seed
+    if "sight" not in parts[1]:
+        return None
+    try:
+        sight = int(parts[1].replace("sight", ""))
+        teammate = parts[2]
+        seed = int(parts[3].replace("seed", ""))
+        return env, sight, teammate, seed
+    except ValueError:
+        return None
 
 
 def load_metrics_summary(csv_path):

@@ -1,12 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=aht-benchmark
+#SBATCH --job-name=marl-baselines
 #SBATCH --account=xliu14
 #SBATCH --partition=short
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --gres=gpu:1
 #SBATCH --time=1-00:00:00
 #SBATCH --output=logs/slurm/%x-%A_%a.out
 #SBATCH --error=logs/slurm/%x-%A_%a.err
@@ -21,20 +20,19 @@ elif [ -f "${HOME}/anaconda3/etc/profile.d/conda.sh" ]; then
   source "${HOME}/anaconda3/etc/profile.d/conda.sh"
 fi
 
-if [ -n "${MQP_CONDA_ENV:-}" ]; then
-  conda activate "${MQP_CONDA_ENV}"
+if conda env list | grep -q "myenv"; then
+  conda activate "myenv"
 elif conda env list | grep -q "observability-aht"; then
   conda activate "observability-aht"
-elif conda env list | grep -q "myenv"; then
-  conda activate "myenv"
 else
   conda activate base
 fi
 
 export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=4
 
+ALGO="${ALGO:-transformer_q}"
 BENCHMARK_ENV="${BENCHMARK_ENV:-lbf}"
-SMOKE_TEST="${SMOKE_TEST:-0}"
 
 # Sights array based on environment
 if [ "${BENCHMARK_ENV}" == "lbf" ]; then
@@ -44,9 +42,8 @@ else
 fi
 
 TEAMMATES=("random" "greedy")
-SEEDS=(42 43 44 45 46)
+SEEDS=(1 2 3 4 5)
 
-# Compute parameter index from SLURM_ARRAY_TASK_ID (0-indexed or 1-indexed)
 TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
 
 N_SEEDS=${#SEEDS[@]}
@@ -67,33 +64,31 @@ SIGHT="${SIGHTS[${SIGHT_IDX}]}"
 TEAMMATE="${TEAMMATES[${TM_IDX}]}"
 SEED="${SEEDS[${SEED_IDX}]}"
 
-OUTPUT_DIR="results/${BENCHMARK_ENV}_sight${SIGHT}_${TEAMMATE}_seed${SEED}"
+OUTPUT_DIR="results/${BENCHMARK_ENV}_${ALGO}_sight${SIGHT}_${TEAMMATE}_seed${SEED}"
 mkdir -p "${OUTPUT_DIR}"
 
+DEVICE="${BENCHMARK_DEVICE:-cpu}"
+
 echo "=================================================="
-echo "Launching Task ${TASK_ID} on $(hostname)"
+echo "Launching Baseline Task ${TASK_ID} on $(hostname)"
+echo "Algorithm:   ${ALGO}"
 echo "Environment: ${BENCHMARK_ENV}"
-echo "Sight: ${SIGHT}"
-echo "Teammate: ${TEAMMATE}"
-echo "Seed: ${SEED}"
-echo "Output Directory: ${OUTPUT_DIR}"
+echo "Sight:       ${SIGHT}"
+echo "Teammate:    ${TEAMMATE}"
+echo "Seed:        ${SEED}"
+echo "Device:      ${DEVICE}"
+echo "Output Dir:  ${OUTPUT_DIR}"
 echo "=================================================="
 
-EXTRA_ARGS=""
-if [ "${SMOKE_TEST}" == "1" ]; then
-  EXTRA_ARGS="--smoke-test"
-fi
-
-DEVICE="${BENCHMARK_DEVICE:-cuda}"
-
-python -u experiments/run_benchmark.py \
+python -u train.py \
+    --algo "${ALGO}" \
     --env "${BENCHMARK_ENV}" \
-    --sight "${SIGHT}" \
+    --sight_radius "${SIGHT}" \
     --teammate_type "${TEAMMATE}" \
     --seed "${SEED}" \
     --output_dir "${OUTPUT_DIR}" \
-    --n-episodes 128000 \
-    --device "${DEVICE}" \
-    ${EXTRA_ARGS}
+    --train_steps 2000000 \
+    --eval_interval 50000 \
+    --device "${DEVICE}"
 
 echo "Task ${TASK_ID} completed successfully!"

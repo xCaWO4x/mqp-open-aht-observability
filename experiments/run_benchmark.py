@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agents.gpl.gpl_agent import GPLAgent
 from agents.teammate_policies import get_teammate_policy
+from envs.distractor_wrapper import DistractorEnvWrapper
 from envs.env_utils import preprocess_lbf, preprocess_wolfpack
 from eval.logger import Logger
 
@@ -111,6 +112,10 @@ def run_benchmark(
     output_dir: Optional[str] = None,
     smoke_test: bool = False,
     device: Optional[str] = None,
+    num_distractors: int = 0,
+    distractor_type: str = "none",
+    distractor_seed: Optional[int] = None,
+    shuffle_distractor_slots: bool = True,
 ):
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -121,7 +126,10 @@ def run_benchmark(
     env_is_lbf = "lbf" in env_name.lower() or "foraging" in env_name.lower()
 
     if output_dir is None:
-        output_dir = f"results/{env_name}_sight{sight}_{teammate_type}_seed{seed}"
+        if num_distractors > 0:
+            output_dir = f"results/{env_name}_sight{sight}_{teammate_type}_dist{num_distractors}_{distractor_type}_seed{seed}"
+        else:
+            output_dir = f"results/{env_name}_sight{sight}_{teammate_type}_seed{seed}"
     ckpt_dir = os.path.join(output_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
 
@@ -129,12 +137,14 @@ def run_benchmark(
         n_agents = 3
         n_food = 3
         K = 3
-        obs_dim = 11  # 2 + 3 * 3 (levels hidden)
+        total_food = n_food + num_distractors
+        obs_dim = 2 + 3 * total_food  # 2 agent features + 3 per food
         action_dim = 6
         hidden_dim = 100
         max_steps = 50
-        envs = [
-            make_benchmark_env(
+        envs = []
+        for i in range(n_envs):
+            e = make_benchmark_env(
                 "lbf",
                 sight=sight,
                 seed=seed + i,
@@ -145,12 +155,21 @@ def run_benchmark(
                 K=K,
                 observe_agent_levels=False,
             )
-            for i in range(n_envs)
-        ]
+            if num_distractors > 0 and distractor_type != "none":
+                d_seed = (distractor_seed if distractor_seed is not None else seed + 100000) + i * 1000
+                e = DistractorEnvWrapper(
+                    e,
+                    num_distractors=num_distractors,
+                    distractor_type=distractor_type,
+                    distractor_seed=d_seed,
+                    shuffle_slots=shuffle_distractor_slots,
+                )
+            envs.append(e)
+
         preprocess_fn = lambda obs, dev: preprocess_lbf(
             obs,
             n_agents=n_agents,
-            n_food=n_food,
+            n_food=total_food,
             hidden_dim=hidden_dim,
             device=dev,
             observe_agent_levels=False,
@@ -159,12 +178,14 @@ def run_benchmark(
     else:
         n_agents = 3
         n_prey = 2
-        obs_dim = 8   # 2 + 3 * 2
+        total_prey = n_prey + num_distractors
+        obs_dim = 2 + 3 * total_prey  # 2 wolf features + 3 per prey
         action_dim = 5
         hidden_dim = 100
         max_steps = 50
-        envs = [
-            make_benchmark_env(
+        envs = []
+        for i in range(n_envs):
+            e = make_benchmark_env(
                 "wolfpack",
                 sight=sight,
                 seed=seed + i,
@@ -173,12 +194,21 @@ def run_benchmark(
                 n_prey=n_prey,
                 max_steps=max_steps,
             )
-            for i in range(n_envs)
-        ]
+            if num_distractors > 0 and distractor_type != "none":
+                d_seed = (distractor_seed if distractor_seed is not None else seed + 100000) + i * 1000
+                e = DistractorEnvWrapper(
+                    e,
+                    num_distractors=num_distractors,
+                    distractor_type=distractor_type,
+                    distractor_seed=d_seed,
+                    shuffle_slots=shuffle_distractor_slots,
+                )
+            envs.append(e)
+
         preprocess_fn = lambda obs, dev: preprocess_wolfpack(
             obs,
             n_wolves=n_agents,
-            n_prey=n_prey,
+            n_prey=total_prey,
             hidden_dim=hidden_dim,
             device=dev,
             from_ego_perspective=True,
@@ -397,6 +427,10 @@ def main():
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--num_distractors", "--num-distractors", dest="num_distractors", type=int, default=0)
+    parser.add_argument("--distractor_type", "--distractor-type", dest="distractor_type", type=str, default="none", choices=["none", "semantic", "null"])
+    parser.add_argument("--distractor_seed", "--distractor-seed", dest="distractor_seed", type=int, default=None)
+    parser.add_argument("--no_shuffle_distractor_slots", action="store_false", dest="shuffle_distractor_slots", default=True)
     args = parser.parse_args()
 
     run_benchmark(
@@ -410,6 +444,10 @@ def main():
         output_dir=args.output_dir,
         smoke_test=args.smoke_test,
         device=args.device,
+        num_distractors=args.num_distractors,
+        distractor_type=args.distractor_type,
+        distractor_seed=args.distractor_seed,
+        shuffle_distractor_slots=args.shuffle_distractor_slots,
     )
 
 

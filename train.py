@@ -583,6 +583,7 @@ def train(
             if eval_ret > best_eval_return:
                 best_eval_return = eval_ret
                 agent.save(os.path.join(ckpt_dir, "model_best.pt"))
+            agent.save(os.path.join(ckpt_dir, "model_latest.pt"))
             tqdm.write(f"[{algo} | Step {global_step:,}] Eval Return: {eval_ret:.3f} | Win Rate: {eval_succ:.2f} | Best: {best_eval_return:.3f}")
 
     pbar.close()
