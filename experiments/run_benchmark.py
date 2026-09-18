@@ -207,6 +207,11 @@ def run_benchmark(
     if not smoke_test:
         logger = Logger(log_dir=os.path.join(output_dir, "tb_logs"), use_wandb=False, use_tensorboard=True)
 
+    final_ckpt = os.path.join(ckpt_dir, "gpl_final.pt")
+    if not smoke_test and os.path.exists(final_ckpt):
+        print(f"Run already completed ({final_ckpt} exists). Skipping!")
+        return []
+
     target_episodes = 5 if smoke_test else (n_episodes if n_episodes is not None else 1000)
     eps_init = 1.0
     eps_final = 0.05
@@ -217,16 +222,41 @@ def run_benchmark(
         return eps_init + (eps_final - eps_init) * frac
 
     metrics_file = os.path.join(output_dir, "metrics.csv")
+    start_ep = 0
+    latest_ckpt = os.path.join(ckpt_dir, "gpl_latest.pt")
+    if not smoke_test and os.path.exists(latest_ckpt) and os.path.exists(metrics_file):
+        try:
+            agent.load(latest_ckpt)
+            with open(metrics_file, "r") as f:
+                lines = f.readlines()
+                for line in reversed(lines):
+                    parts = line.strip().split(",")
+                    if parts and parts[0].isdigit():
+                        start_ep = int(parts[0])
+                        break
+            print(f"Resuming training from episode {start_ep} using {latest_ckpt}")
+        except Exception as e:
+            print(f"Warning: Failed to resume from {latest_ckpt} ({e}). Starting fresh.")
+            start_ep = 0
+
+    if start_ep >= target_episodes:
+        print(f"Target episodes ({target_episodes}) already reached. Saving final model and exiting.")
+        if not smoke_test:
+            agent.save(final_ckpt)
+        return []
+
     csv_writer = None
     csv_f = None
     if not smoke_test:
-        csv_f = open(metrics_file, "w", newline="")
+        file_mode = "a" if (start_ep > 0 and os.path.exists(metrics_file)) else "w"
+        csv_f = open(metrics_file, file_mode, newline="")
         csv_writer = csv.writer(csv_f)
-        csv_writer.writerow(["episode", "return", "length", "epsilon", "q_loss", "agent_loss"])
+        if file_mode == "w":
+            csv_writer.writerow(["episode", "return", "length", "epsilon", "q_loss", "agent_loss"])
 
     print(f"=== Starting Benchmark ===")
     print(f"Env: {env_name} | Sight: {sight} | Teammates: {teammate_type} | Seed: {seed}")
-    print(f"Episodes: {target_episodes} | N_envs: {n_envs} | Device: {device} | Output: {output_dir}")
+    print(f"Episodes: {target_episodes} (Starting from {start_ep}) | N_envs: {n_envs} | Device: {device} | Output: {output_dir}")
 
     # Per-env state caching
     env_obs = [None] * n_envs
@@ -235,12 +265,12 @@ def run_benchmark(
     env_ep_len = [0] * n_envs
     env_hidden = [(None, None, None)] * n_envs
 
-    global_step = 0
-    completed_episodes = 0
+    global_step = start_ep * max_steps
+    completed_episodes = start_ep
     all_returns = []
     last_metrics = {}
 
-    pbar = tqdm(total=target_episodes, desc=f"{env_name}_s{sight}_{teammate_type}")
+    pbar = tqdm(total=target_episodes, initial=start_ep, desc=f"{env_name}_s{sight}_{teammate_type}")
     while completed_episodes < target_episodes:
         if max_steps_total is not None and global_step >= max_steps_total:
             break
@@ -326,7 +356,11 @@ def run_benchmark(
                     q_loss = last_metrics.get("q_loss", float("nan"))
                     ag_loss = last_metrics.get("agent_model_loss", float("nan"))
                     csv_writer.writerow([completed_episodes, ep_return, ep_len, eps, q_loss, ag_loss])
-                    csv_f.flush()
+                    if completed_episodes % 50 == 0 or completed_episodes == target_episodes:
+                        try:
+                            csv_f.flush()
+                        except (BlockingIOError, OSError):
+                            pass
 
                 if not smoke_test and (completed_episodes % 500 == 0 or completed_episodes == target_episodes):
                     agent.save(os.path.join(ckpt_dir, f"gpl_ep{completed_episodes}.pt"))
@@ -335,12 +369,16 @@ def run_benchmark(
 
     pbar.close()
     if csv_f is not None:
+        try:
+            csv_f.flush()
+        except (BlockingIOError, OSError):
+            pass
         csv_f.close()
     if logger is not None:
         logger.close()
 
     if not smoke_test:
-        agent.save(os.path.join(ckpt_dir, "gpl_final.pt"))
+        agent.save(final_ckpt)
 
     mean_ret = float(np.mean(all_returns)) if len(all_returns) > 0 else 0.0
     print(f"Finished! Completed episodes: {completed_episodes}, Total steps: {global_step}, Mean return: {mean_ret:.3f}")
